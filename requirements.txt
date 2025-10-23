@@ -1,0 +1,15 @@
+torch>=2.0.0
+torchaudio>=2.0.0
+transformers>=4.30.0
+librosa>=0.10.0
+soundfile>=0.12.0
+numpy>=1.24.0
+scipy>=1.10.0
+matplotlib>=3.7.0
+tkinter-tooltip>=2.0.0
+Pillow>=9.5.0
+requests>=2.31.0
+huggingface-hub>=0.16.0
+accelerate>=0.20.0
+# essentia>=2.1b6.dev1030  # Optional - có thể cài đặt sau
+

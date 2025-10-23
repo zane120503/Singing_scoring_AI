@@ -1,0 +1,13 @@
+
+version: '3.8'
+
+services:
+  essentia-app:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./temp_output:/app/temp_output
+      - ./input_files:/app/input_files
+    environment:
+      - PYTHONUNBUFFERED=1
