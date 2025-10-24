@@ -93,12 +93,12 @@ class OptimizedAudioProcessor:
             
             logger.info(f"🎯 Tìm thấy đoạn voice: {first_voice['start']:.2f}s - {first_voice['end']:.2f}s")
 
-            # Bước 2: Cắt 20s từ 25s đến 45s của file karaoke
-            logger.info("✂️ Bước 2: Cắt 20s (25s–45s) từ file karaoke...")
+            # Bước 2: Cắt 30s từ 15s đến 45s của file karaoke
+            logger.info("✂️ Bước 2: Cắt 30s (15s–45s) từ file karaoke...")
             import librosa, soundfile as sf
             base_stem = os.path.splitext(os.path.basename(karaoke_file))[0]
-            start_t = 25.0
-            duration = 20.0
+            start_t = 15.0
+            duration = 30.0
             end_t = start_t + duration
             audio, sr = librosa.load(karaoke_file, sr=None, mono=True)
             start_sample = int(start_t * sr)
@@ -106,32 +106,32 @@ class OptimizedAudioProcessor:
             if start_sample >= len(audio):
                 return {
                     "success": False,
-                    "error": "Karaoke ngắn hơn 25s",
+                    "error": "Karaoke ngắn hơn 15s",
                     "step": "audio_slicing"
                 }
             slice_audio = audio[start_sample:min(end_sample, len(audio))]
             sliced_path = os.path.join(output_dir, f"{base_stem}_slice_{int(start_t)}s_{int(end_t)}s.wav")
             sf.write(sliced_path, slice_audio, sr)
 
-            # Bước 3: Cắt beat từ 25s đến 45s (cùng khoảng với karaoke) để đảm bảo key chính xác
-            logger.info("✂️ Bước 3: Cắt beat từ 25s–45s (cùng khoảng với karaoke)...")
+            # Bước 3: Cắt beat từ 15s đến 45s (cùng khoảng với karaoke) để đảm bảo key chính xác
+            logger.info("✂️ Bước 3: Cắt beat từ 15s–45s (cùng khoảng với karaoke)...")
             beat_audio, beat_sr = librosa.load(beat_file, sr=None, mono=True)
-            beat_start_t = start_t  # Cùng thời điểm với karaoke (25s)
+            beat_start_t = start_t  # Cùng thời điểm với karaoke (15s)
             beat_end_t = end_t      # Cùng thời điểm với karaoke (45s)
             beat_start_sample = int(beat_start_t * beat_sr)
             beat_end_sample = int(beat_end_t * beat_sr)
             if beat_start_sample >= len(beat_audio):
                 return {
                     "success": False,
-                    "error": "Beat ngắn hơn 25s",
+                    "error": "Beat ngắn hơn 15s",
                     "step": "beat_slicing"
                 }
             beat_slice = beat_audio[beat_start_sample:min(beat_end_sample, len(beat_audio))]
             beat_sliced_path = os.path.join(output_dir, f"{base_stem}_beat_slice_{int(beat_start_t)}s_{int(beat_end_t)}s.wav")
             sf.write(beat_sliced_path, beat_slice, beat_sr)
 
-            # Bước 4: AI Audio Separator - Tách giọng từ file đã cắt 20s
-            logger.info("🎤 Bước 4: Tách giọng hát từ đoạn 20s đã cắt...")
+            # Bước 4: AI Audio Separator - Tách giọng từ file đã cắt 30s
+            logger.info("🎤 Bước 4: Tách giọng hát từ đoạn 30s đã cắt...")
             vocals_file = self.audio_processor.separate_vocals(sliced_path)
             
             if not vocals_file or not os.path.exists(vocals_file):
@@ -141,7 +141,7 @@ class OptimizedAudioProcessor:
                     "step": "vocal_separation"
                 }
             
-            # Copy/export vocals 20s về output_dir với tên dễ nhận biết
+            # Copy/export vocals 30s về output_dir với tên dễ nhận biết
             vocals_ext = os.path.splitext(vocals_file)[1]
             vocals_export = os.path.join(output_dir, f"{base_stem}_slice_vocals{vocals_ext}")
             try:

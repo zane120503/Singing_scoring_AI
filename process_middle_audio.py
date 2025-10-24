@@ -11,6 +11,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 import logging
 import librosa
 import numpy as np
+import concurrent.futures
+import threading
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -77,35 +79,72 @@ def process_full_audio(karaoke_file: str, beat_file: str):
             logger.error(f"❌ Tách giọng thất bại: {separation_result['error']}")
             return False
         
-        # Bước 2: Phát hiện key cho vocals
-        logger.info("\n🎼 Bước 2: Phát hiện key cho vocals...")
+        # Bước 2 & 3: Phát hiện key SONG SONG với GPU acceleration cho vocals và instrumental
+        logger.info("\n🎼 Bước 2 & 3: Phát hiện key song song với GPU acceleration...")
         
         key_detector = AdvancedKeyDetector()
         
-        # Phát hiện key cho vocals
-        vocals_key_result = key_detector.detect_key(vocals_file, audio_type="vocals")
-        
-        if vocals_key_result and "key" in vocals_key_result:
-            logger.info("✅ Phát hiện key cho vocals thành công!")
-            logger.info(f"   Detected key: {vocals_key_result['key']}")
-            logger.info(f"   Confidence: {vocals_key_result['confidence']:.3f}")
-            logger.info(f"   Method: {vocals_key_result['method']}")
+        # Log GPU status
+        if key_detector.use_gpu:
+            logger.info(f"🚀 GPU acceleration ENABLED on device: {key_detector.device}")
         else:
-            logger.error(f"❌ Phát hiện key cho vocals thất bại")
+            logger.info("💻 GPU acceleration DISABLED, using CPU")
+        
+        def detect_vocals_key():
+            """Detect key cho vocals"""
+            try:
+                logger.info("🎤 Đang phát hiện key cho vocals...")
+                result = key_detector.detect_key(vocals_file, audio_type="vocals")
+                if result and "key" in result:
+                    logger.info("✅ Phát hiện key cho vocals thành công!")
+                    logger.info(f"   Detected key: {result['key']}")
+                    logger.info(f"   Confidence: {result['confidence']:.3f}")
+                    logger.info(f"   Method: {result['method']}")
+                    return result
+                else:
+                    logger.error("❌ Phát hiện key cho vocals thất bại")
+                    return None
+            except Exception as e:
+                logger.error(f"❌ Lỗi phát hiện key vocals: {e}")
+                return None
+        
+        def detect_instrumental_key():
+            """Detect key cho instrumental"""
+            try:
+                logger.info("🎵 Đang phát hiện key cho instrumental...")
+                result = key_detector.detect_key(instrumental_file, audio_type="instrumental")
+                if result and "key" in result:
+                    logger.info("✅ Phát hiện key cho instrumental thành công!")
+                    logger.info(f"   Detected key: {result['key']}")
+                    logger.info(f"   Confidence: {result['confidence']:.3f}")
+                    logger.info(f"   Method: {result['method']}")
+                    return result
+                else:
+                    logger.error("❌ Phát hiện key cho instrumental thất bại")
+                    return None
+            except Exception as e:
+                logger.error(f"❌ Lỗi phát hiện key instrumental: {e}")
+                return None
+        
+        # Chạy song song với ThreadPoolExecutor
+        logger.info("⚡ Chạy phát hiện key song song...")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            # Submit cả hai tasks
+            vocals_future = executor.submit(detect_vocals_key)
+            instrumental_future = executor.submit(detect_instrumental_key)
+            
+            # Chờ kết quả từ cả hai
+            vocals_key_result = vocals_future.result()
+            instrumental_key_result = instrumental_future.result()
+        
+        logger.info("🎉 Hoàn thành phát hiện key song song!")
+        
+        # Kiểm tra kết quả
+        if not vocals_key_result:
+            logger.error("❌ Phát hiện key cho vocals thất bại")
             return False
-        
-        # Bước 3: Phát hiện key cho instrumental
-        logger.info("\n🎼 Bước 3: Phát hiện key cho instrumental...")
-        
-        instrumental_key_result = key_detector.detect_key(instrumental_file, audio_type="instrumental")
-        
-        if instrumental_key_result and "key" in instrumental_key_result:
-            logger.info("✅ Phát hiện key cho instrumental thành công!")
-            logger.info(f"   Detected key: {instrumental_key_result['key']}")
-            logger.info(f"   Confidence: {instrumental_key_result['confidence']:.3f}")
-            logger.info(f"   Method: {instrumental_key_result['method']}")
-        else:
-            logger.error(f"❌ Phát hiện key cho instrumental thất bại")
+        if not instrumental_key_result:
+            logger.error("❌ Phát hiện key cho instrumental thất bại")
             return False
         
         # Bước 4: So sánh keys và tính điểm

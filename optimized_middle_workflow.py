@@ -18,6 +18,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 import logging
 import librosa
 import soundfile as sf
+import concurrent.futures
+import threading
 
 from typing import Dict
 import shutil
@@ -28,8 +30,8 @@ from src.ai.advanced_key_detector import AdvancedKeyDetector
 logging.basicConfig(level=logging.INFO, format='%(levelname)s:%(name)s:%(message)s')
 logger = logging.getLogger(__name__)
 
-def run_workflow(karaoke_file: str, beat_file: str, duration: float = 20.0, output_dir: str = None) -> Dict:
-    """Chạy workflow cắt 20s (15-35s), tách giọng, detect key, so sánh & chấm điểm."""
+def run_workflow(karaoke_file: str, beat_file: str, duration: float = 30.0, output_dir: str = None) -> Dict:
+    """Chạy workflow cắt 30s (15-45s), tách giọng, detect key, so sánh & chấm điểm."""
     # 0) Chuẩn bị thư mục xuất
     if output_dir is None:
         output_dir = os.path.join(os.path.dirname(__file__), 'Audio_separator_ui', 'clean_song_output')
@@ -37,57 +39,140 @@ def run_workflow(karaoke_file: str, beat_file: str, duration: float = 20.0, outp
 
     base_stem = os.path.splitext(os.path.basename(karaoke_file))[0]
 
-    # 1) Cắt 20s từ 25s đến 45s của file karaoke
+    # 1) Cắt audio thông minh dựa trên độ dài file
     try:
         audio, sr = librosa.load(karaoke_file, sr=None, mono=True)
-        start_t = 25.0
-        end_t = start_t + duration
-        start_sample = int(start_t * sr)
-        end_sample = int(end_t * sr)
-        if start_sample >= len(audio):
-            return {"success": False, "error": "Karaoke ngắn hơn 25s"}
-        slice_audio = audio[start_sample:min(end_sample, len(audio))]
-        sliced_path = os.path.join(output_dir, f"{base_stem}_slice_{int(start_t)}s_{int(end_t)}s.wav")
+        total_duration = len(audio) / sr
+        
+        logger.info(f"📊 File duration: {total_duration:.2f}s")
+        
+        # Logic cắt thông minh
+        if total_duration <= duration:
+            # File ngắn: sử dụng toàn bộ file
+            logger.info(f"📁 File ngắn ({total_duration:.2f}s ≤ {duration}s), sử dụng toàn bộ file")
+            start_t = 0.0
+            end_t = total_duration
+            slice_audio = audio
+        elif total_duration <= 60.0:
+            # File trung bình: cắt từ giữa
+            logger.info(f"📁 File trung bình ({total_duration:.2f}s), cắt từ giữa")
+            start_t = max(0, (total_duration - duration) / 2)
+            end_t = start_t + duration
+            start_sample = int(start_t * sr)
+            end_sample = int(end_t * sr)
+            slice_audio = audio[start_sample:end_sample]
+        else:
+            # File dài: cắt từ 15s như cũ
+            logger.info(f"📁 File dài ({total_duration:.2f}s), cắt từ 15s")
+            start_t = 15.0
+            end_t = start_t + duration
+            start_sample = int(start_t * sr)
+            end_sample = int(end_t * sr)
+            slice_audio = audio[start_sample:end_sample]
+        
+        # Lưu file đã cắt
+        actual_duration = len(slice_audio) / sr
+        sliced_path = os.path.join(output_dir, f"{base_stem}_slice_{int(start_t)}s_{int(start_t + actual_duration)}s.wav")
         sf.write(sliced_path, slice_audio, sr)
+        
+        logger.info(f"✅ Đã cắt audio: {actual_duration:.2f}s từ {start_t:.1f}s")
+        
     except Exception as e:
         return {"success": False, "error": f"Lỗi cắt audio: {e}"}
 
-    # 2) Tách giọng từ đoạn 20s đã cắt
-    audio_proc = AdvancedAudioProcessor(fast_mode=False)
-    vocals_path = audio_proc.separate_vocals(sliced_path)
-    if not vocals_path or not os.path.exists(vocals_path):
-        return {"success": False, "error": "Tách giọng thất bại"}
-
-    # Xuất/copy vocals 20s đã tách ra output_dir
-    vocals_ext = os.path.splitext(vocals_path)[1]
-    vocals_export = os.path.join(output_dir, f"{base_stem}_slice_vocals{vocals_ext}")
-    try:
-        shutil.copy2(vocals_path, vocals_export)
-    except Exception:
-        # fallback: nếu copy fail vẫn dùng vocals_path gốc
-        vocals_export = vocals_path
-
-    # 3) Detect key bằng multiple methods cho beat (file gốc) để tăng độ chính xác
+    # 2) Khởi tạo Key Detector và bắt đầu Beat Key Detection ngay lập tức
+    logger.info("🎼 Khởi tạo Key Detector và bắt đầu Beat Key Detection...")
     keydet = AdvancedKeyDetector()
-    try:
-        vocals_key = keydet.detect_key(vocals_export, audio_type='vocals')
-    except Exception:
-        vocals_key = None
     
-    # Thử nhiều phương pháp detect key cho beat (file gốc)
-    beat_key = None
-    beat_methods = ['beat', 'instrumental', 'vocals']  # Thử các audio_type khác nhau
+    # Log GPU status
+    if keydet.use_gpu:
+        logger.info(f"🚀 GPU acceleration ENABLED on device: {keydet.device}")
+    else:
+        logger.info("💻 GPU acceleration DISABLED, using CPU")
     
-    for method in beat_methods:
+    def detect_beat_key():
+        """Detect key cho beat với focus vào accuracy"""
         try:
-            temp_beat_key = keydet.detect_key(beat_file, audio_type=method)
-            if temp_beat_key and 'key' in temp_beat_key:
-                beat_key = temp_beat_key
-                logger.info(f"✅ Beat key detected với method '{method}': {beat_key['key']}")
-                break
+            logger.info(f"🎵 Đang phát hiện key cho beat...")
+            # Sử dụng audio_type='beat' để trigger beat-specific analysis
+            result = keydet.detect_key(beat_file, audio_type='beat')
+            if result and 'key' in result:
+                logger.info(f"✅ Beat key detected: {result['key']}")
+                return result
+            else:
+                # Fallback: thử với instrumental
+                logger.info("🔄 Fallback: thử với audio_type='instrumental'...")
+                result = keydet.detect_key(beat_file, audio_type='instrumental')
+                if result and 'key' in result:
+                    logger.info(f"✅ Beat key detected (fallback): {result['key']}")
+                    return result
+                else:
+                    # Final fallback: vocals method
+                    logger.info("🔄 Final fallback: thử với audio_type='vocals'...")
+                    result = keydet.detect_key(beat_file, audio_type='vocals')
+                    if result and 'key' in result:
+                        logger.info(f"✅ Beat key detected (final fallback): {result['key']}")
+                        return result
         except Exception as e:
-            logger.warning(f"Method '{method}' failed: {e}")
-            continue
+            logger.warning(f"Beat key detection failed: {e}")
+        return None
+    
+    def separate_vocals():
+        """Tách giọng từ đoạn audio đã cắt"""
+        try:
+            logger.info("🎤 Bắt đầu tách giọng hát...")
+            audio_proc = AdvancedAudioProcessor(fast_mode=False)
+            vocals_path = audio_proc.separate_vocals(sliced_path)
+            if not vocals_path or not os.path.exists(vocals_path):
+                return None, None
+            
+            # Xuất/copy vocals đã tách ra output_dir
+            vocals_ext = os.path.splitext(vocals_path)[1]
+            vocals_export = os.path.join(output_dir, f"{base_stem}_slice_vocals{vocals_ext}")
+            try:
+                shutil.copy2(vocals_path, vocals_export)
+            except Exception:
+                # fallback: nếu copy fail vẫn dùng vocals_path gốc
+                vocals_export = vocals_path
+            
+            logger.info("✅ Tách giọng hoàn thành!")
+            return vocals_path, vocals_export
+        except Exception as e:
+            logger.warning(f"Vocal separation failed: {e}")
+            return None, None
+    
+    def detect_vocals_key(vocals_export):
+        """Detect key cho vocals"""
+        try:
+            logger.info("🎤 Đang phát hiện key cho vocals...")
+            result = keydet.detect_key(vocals_export, audio_type='vocals')
+            logger.info(f"✅ Vocals key detected: {result.get('key', 'Unknown')}")
+            return result
+        except Exception as e:
+            logger.warning(f"Vocals key detection failed: {e}")
+            return None
+    
+    # 3) Chạy Beat Key Detection và Vocal Separation SONG SONG
+    logger.info("⚡ Chạy Beat Key Detection và Vocal Separation song song...")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        # Submit beat key detection ngay lập tức
+        beat_future = executor.submit(detect_beat_key)
+        # Submit vocal separation song song
+        vocals_sep_future = executor.submit(separate_vocals)
+        
+        # Chờ beat key detection hoàn thành trước
+        beat_key = beat_future.result()
+        logger.info("🎉 Beat key detection hoàn thành!")
+        
+        # Chờ vocal separation hoàn thành
+        vocals_path, vocals_export = vocals_sep_future.result()
+        if not vocals_export:
+            return {"success": False, "error": "Tách giọng thất bại"}
+        
+        # Detect vocals key sau khi separation hoàn thành
+        vocals_key = detect_vocals_key(vocals_export)
+    
+    logger.info("🎉 Hoàn thành tất cả key detection!")
     if not (vocals_key and 'key' in vocals_key and beat_key and 'key' in beat_key):
         return {"success": False, "error": "Phát hiện key thất bại"}
 

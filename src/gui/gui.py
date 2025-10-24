@@ -359,27 +359,35 @@ class KaraokeScoringGUI:
             self.root.after(0, self.reset_ui)
     
     def analyze_audio_optimized(self):
-        """Phân tích âm thanh với workflow tối ưu hóa"""
+        """Phân tích âm thanh với workflow tối ưu hóa SONG SONG"""
         try:
-            logger.info("🚀 Bắt đầu phân tích với Optimized Workflow...")
+            logger.info("🚀 Bắt đầu phân tích với Optimized Workflow SONG SONG...")
             
-            # Sử dụng Optimized Audio Processor
-            result = self.optimized_processor.process_karaoke_optimized(
+            # Import parallel workflow
+            import sys
+            import os
+            sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+            from optimized_middle_workflow import run_workflow
+            
+            # Sử dụng Parallel Workflow với GPU acceleration
+            logger.info("⚡ Sử dụng Parallel Key Detection với GPU...")
+            result = run_workflow(
                 self.karaoke_file, 
-                self.beat_file
+                self.beat_file,
+                duration=30.0
             )
             
             if result["success"]:
-                logger.info("✅ Optimized workflow hoàn thành!")
+                logger.info("✅ Parallel workflow hoàn thành!")
                 
                 # Cập nhật giao diện với kết quả
-                self.root.after(0, lambda: self.display_optimized_results(result))
+                self.root.after(0, lambda: self.display_parallel_results(result))
             else:
-                error_msg = f"Optimized workflow thất bại: {result['error']}"
+                error_msg = f"Parallel workflow thất bại: {result['error']}"
                 self.root.after(0, lambda: self.show_error(error_msg))
                 
         except Exception as e:
-            logger.error(f"❌ Lỗi trong optimized workflow: {e}")
+            logger.error(f"❌ Lỗi trong parallel workflow: {e}")
             raise e
     
     def analyze_audio_standard(self):
@@ -427,6 +435,83 @@ class KaraokeScoringGUI:
     def update_status(self, message):
         """Cập nhật trạng thái"""
         self.root.after(0, lambda: self.status_label.config(text=message, fg='#f39c12'))
+    
+    def display_parallel_results(self, result):
+        """Hiển thị kết quả từ parallel workflow"""
+        try:
+            logger.info("📊 Hiển thị kết quả parallel workflow...")
+            
+            # Cập nhật status
+            self.status_label.config(text="Phân tích hoàn thành!", fg='#27ae60')
+            
+            # Tính điểm tổng thể từ key comparison
+            key_score = result['key_compare']['score']
+            overall_score = key_score  # Đơn giản hóa: điểm key = điểm tổng thể
+            
+            # Xác định grade
+            if overall_score >= 90:
+                grade = "A"
+            elif overall_score >= 80:
+                grade = "B"
+            elif overall_score >= 70:
+                grade = "C"
+            else:
+                grade = "D"
+            
+            # Cập nhật điểm tổng thể
+            self.overall_score_label.config(text=f"Điểm tổng thể: {overall_score:.1f}/100")
+            self.grade_label.config(text=f"Xếp loại: {grade}")
+            
+            # Cập nhật detailed scores
+            for item in self.scores_tree.get_children():
+                self.scores_tree.delete(item)
+            
+            # Thêm key accuracy score
+            self.scores_tree.insert('', 'end', values=(
+                'Độ chính xác phím', 
+                f"{key_score:.1f}", 
+                "100.0%"
+            ))
+            
+            # Hiển thị kết quả chi tiết trong feedback
+            result_text = f"""🎉 PHÂN TÍCH SONG SONG HOÀN THÀNH!
+
+📁 Files đã xử lý:
+   Karaoke: {os.path.basename(result['inputs']['karaoke_file'])}
+   Beat: {os.path.basename(result['inputs']['beat_file'])}
+
+🎵 Kết quả phát hiện key:
+   Vocals Key: {result['vocals_key']['key']} {result['vocals_key']['scale']} 
+   Beat Key: {result['beat_key']['key']} {result['beat_key']['scale']}
+
+📊 So sánh key:
+   Match: {'✅ YES' if result['key_compare']['match'] else '❌ NO'}
+   Similarity: {result['key_compare']['similarity']:.3f}
+   Score: {result['key_compare']['score']:.1f}/100
+
+⚡ Performance:
+   Method: Parallel Key Detection
+   GPU: {'✅ ENABLED' if 'GPU' in str(result['vocals_key'].get('method', '')) else '💻 CPU'}
+
+🏆 ĐIỂM TỔNG THỂ: {overall_score:.1f}/100
+📈 XẾP LOẠI: {grade}
+"""
+            
+            # Cập nhật feedback text
+            self.feedback_text.delete(1.0, tk.END)
+            self.feedback_text.insert(1.0, result_text)
+            
+            # Log kết quả
+            logger.info(f"✅ Parallel workflow results displayed")
+            logger.info(f"   Vocals: {result['vocals_key']['key']} {result['vocals_key']['scale']}")
+            logger.info(f"   Beat: {result['beat_key']['key']} {result['beat_key']['scale']}")
+            logger.info(f"   Score: {result['key_compare']['score']:.1f}/100")
+            logger.info(f"   Overall Score: {overall_score:.1f}/100")
+            logger.info(f"   Grade: {grade}")
+            
+        except Exception as e:
+            logger.error(f"❌ Lỗi hiển thị kết quả parallel: {e}")
+            self.show_error(f"Lỗi hiển thị kết quả: {str(e)}")
     
     def display_optimized_results(self, result):
         """Hiển thị kết quả từ optimized workflow"""
