@@ -1,16 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Optimized Middle Workflow (20s Slice Processing)
-- Input: karaoke_file, beat_file
-- Steps:
-  1) Cắt file karaoke từ 15s đến 35s (20s)
-  2) Tách giọng trên đoạn 20s đã cắt bằng Audio Separator
-  3) Xuất file vocals 20s đã tách
-  4) Detect key (ưu tiên Docker Essentia) cho vocals 20s và beat
-  5) So sánh key và tính điểm
-"""
-
 import os
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
@@ -373,10 +360,10 @@ def run_workflow(karaoke_file: str, beat_file: str, duration: float = 30.0, outp
         logger.info(f"   Đến: {end_t:.2f}s ({int(end_t//60):02d}:{int(end_t%60):02d})")
         logger.info(f"   Thời lượng: {final_duration:.2f}s (yêu cầu: 30s)")
         
-        start_sample = int(start_t * sr)
-        end_sample = int(end_t * sr)
+            start_sample = int(start_t * sr)
+            end_sample = int(end_t * sr)
         end_sample = min(end_sample, len(audio))  # Đảm bảo không vượt quá
-        slice_audio = audio[start_sample:end_sample]
+            slice_audio = audio[start_sample:end_sample]
         
         logger.info("="*70 + "\n")
         

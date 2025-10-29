@@ -54,17 +54,84 @@ singing scoring AI/
 └── requirements.txt      # Dependencies
 ```
 
-## 🚀 Cách sử dụng
+## 🚀 Cách cài đặt nhanh (Clone và chạy ngay)
 
-### 1. Cài đặt dependencies
+### 0. Yêu cầu hệ thống
+- **Python**: 3.10 hoặc 3.11 (khuyến nghị 3.11)
+- **Git**: để clone repo
+- **ffmpeg**: để xử lý audio (Windows: cài từ `https://ffmpeg.org` và thêm vào PATH)
+- (Tùy chọn) **GPU + CUDA 12.1** nếu muốn tăng tốc với GPU
+- (Tùy chọn) **Docker Desktop** nếu muốn dùng Essentia AI qua Docker (Windows cần WSL2)
+
+### 1. Clone repo và tạo môi trường ảo
+```bash
+git clone https://github.com/your-org/singing-scoring-AI.git
+cd "singing scoring AI"
+
+# Tạo venv
+python -m venv .venv
+
+# Kích hoạt venv
+# Windows PowerShell
+.\.venv\Scripts\Activate.ps1
+# macOS/Linux
+source .venv/bin/activate
+```
+
+### 2. Cài đặt dependencies cơ bản
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Chạy hệ thống
+### 3. Cài đặt PyTorch (giải quyết triệt để lỗi "Import \"torch\" could not be resolved")
+- CPU (ổn định, không cần CUDA):
+```bash
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+```
+- GPU (CUDA 12.1 – phổ biến trên Windows hiện tại):
+```bash
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+```
+
+Kiểm tra nhanh:
+```bash
+python -c "import torch; print('torch:', torch.__version__, 'cuda:', torch.cuda.is_available())"
+```
+
+### 4. (Tùy chọn) Bật Essentia AI qua Docker
+Essentia AI cho key detection có thể chạy trong Docker. Cài Docker Desktop trước (Windows: bật WSL2 backend).
+
+Chạy bằng docker compose (khuyến nghị):
+```bash
+docker compose -f config/docker-compose.yml up -d --build
+```
+Hoặc dùng script có sẵn (Windows):
+```bat
+scripts\run_docker.bat
+```
+Kiểm tra Docker Essentia hoạt động:
+```bash
+python scripts/check_docker_essentia.py
+```
+
+Lưu ý Windows/WSL: nếu Docker báo "WSL is unresponsive", chạy script:
+```bash
+python scripts/fix_wsl_docker.py
+```
+
+### 5. Chạy hệ thống
 ```bash
 python main.py
 ```
+
+### 6. (Tùy chọn) Demo GPU song song và kiểm tra bộ nhớ GPU
+```bash
+python gpu_parallel_demo.py
+```
+
+## 🚀 Cách sử dụng
+
+Đã gộp trong phần Cách cài đặt nhanh ở trên.
 
 ### 3. Sử dụng GUI
 - Chọn file karaoke (file ghi âm)
@@ -96,10 +163,10 @@ Hệ thống mặc định sử dụng **Fast Mode** để tăng tốc độ:
 
 ## 🔧 Troubleshooting
 
-1. **Lỗi import:** Kiểm tra Python path
-2. **Lỗi Docker:** Chạy `docker-compose up`
-3. **Lỗi Essentia:** Sử dụng fallback method
-4. **Lỗi Audio Separator:** Sử dụng Fast Mode
+1. **Import "torch" could not be resolved**: Cài đúng PyTorch (mục 3), reload IDE, đảm bảo bạn đang ở trong venv khi chạy.
+2. **Docker không chạy/không thấy container Essentia**: Mở Docker Desktop, bật WSL2 backend (Windows), chạy `docker compose -f config/docker-compose.yml up -d --build`, sau đó `python scripts/check_docker_essentia.py`.
+3. **Essentia lỗi trong container**: Dùng `scripts/check_docker_essentia.py` để chẩn đoán; nếu WSL treo, chạy `python scripts/fix_wsl_docker.py` rồi mở lại Docker Desktop.
+4. **Audio Separator chậm**: Dùng Fast Mode (mặc định) hoặc đảm bảo GPU đã được nhận (`torch.cuda.is_available()` là True) nếu dùng GPU.
 
 ## 📝 Ghi chú
 
