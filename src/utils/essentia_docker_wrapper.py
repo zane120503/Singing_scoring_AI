@@ -30,10 +30,18 @@ class EssentiaDockerWrapper:
             subprocess.run(f"docker cp {audio_path} {self.container_name}:/tmp/audio.wav", 
                          shell=True)
             
-            # Run key detection
-            cmd = f"docker exec {self.container_name} python -c "import essentia.standard as es; audio = es.MonoLoader(filename='/tmp/audio.wav')(); key, scale, strength = es.KeyExtractor()(audio); print(f'{{key}} {{scale}} {{strength}}')""
+            # Run key detection (build command list to avoid quoting issues)
+            cmd = [
+                "docker", "exec", self.container_name, "python", "-c",
+                (
+                    "import essentia.standard as es; "
+                    "audio = es.MonoLoader(filename='/tmp/audio.wav')(); "
+                    "key, scale, strength = es.KeyExtractor()(audio); "
+                    "print(f'{key} {scale} {strength}')"
+                )
+            ]
             
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+            result = subprocess.run(cmd, shell=False, capture_output=True, text=True)
             
             if result.returncode == 0:
                 parts = result.stdout.strip().split()
