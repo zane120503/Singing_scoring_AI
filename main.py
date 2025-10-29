@@ -1,13 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Hệ thống chấm điểm giọng hát karaoke bằng AI
-Karaoke Singing Score AI System
-
-Tác giả: AI Assistant
-Ngày tạo: 2024
-"""
-
 import sys
 import os
 import warnings
