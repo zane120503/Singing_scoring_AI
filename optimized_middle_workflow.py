@@ -359,12 +359,12 @@ def run_workflow(karaoke_file: str, beat_file: str, duration: float = 30.0, outp
         logger.info(f"   Từ: {start_t:.2f}s ({int(start_t//60):02d}:{int(start_t%60):02d})")
         logger.info(f"   Đến: {end_t:.2f}s ({int(end_t//60):02d}:{int(end_t%60):02d})")
         logger.info(f"   Thời lượng: {final_duration:.2f}s (yêu cầu: 30s)")
-        
-            start_sample = int(start_t * sr)
-            end_sample = int(end_t * sr)
+
+        start_sample = int(start_t * sr)
+        end_sample = int(end_t * sr)
         end_sample = min(end_sample, len(audio))  # Đảm bảo không vượt quá
-            slice_audio = audio[start_sample:end_sample]
-        
+        slice_audio = audio[start_sample:end_sample]
+
         logger.info("="*70 + "\n")
         
         # Lưu file đã cắt
