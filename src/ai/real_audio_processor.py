@@ -11,7 +11,10 @@ import torch
 import onnxruntime as ort
 from typing import Tuple, Union
 import warnings
+import logging
 warnings.filterwarnings("ignore")
+
+logger = logging.getLogger(__name__)
 
 # Thêm đường dẫn đến Audio_separator_ui
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'Audio_separator_ui'))
@@ -82,10 +85,41 @@ class RealAudioProcessor:
             with open(file_path, 'rb') as f:
                 return hashlib.md5(f.read()).hexdigest()
     
-    def separate_vocals_real(self, audio_path: str, output_path: Union[str, None] = None) -> str:
+    def separate_vocals_real(self, audio_path: str, output_path: Union[str, None] = None, check_vocals: bool = True) -> str:
         """Real vocal separation using Audio Separator AI models"""
         try:
             print("🎵 Starting real AI vocal separation...")
+            
+            # Check if file has vocals (optional check)
+            if check_vocals:
+                try:
+                    print("\n🔍 ===== BẮT ĐẦU KIỂM TRA GIỌNG HÁT =====")
+                    from vocals_presence_checker import VocalsPresenceChecker
+                    checker = VocalsPresenceChecker()
+                    vocals_check = checker.check_vocals_presence(audio_path)
+                    
+                    if not vocals_check['has_vocals']:
+                        logger.warning(f"⚠️ File may not contain vocals (confidence: {vocals_check['confidence']:.2f})")
+                        logger.warning("⚠️ This file appears to be instrumental/no vocals")
+                        logger.warning("⚠️ Continuing anyway, but results may not be accurate")
+                        
+                        # Optionally skip separation for instrumental files
+                        # Uncomment below if you want to skip:
+                        # if vocals_check['confidence'] < 0.3:
+                        #     logger.info("🔄 File detected as instrumental, skipping vocal separation")
+                        #     logger.info("🔄 Returning empty/fallback vocals")
+                        #     return self._create_empty_vocals(audio_path, output_path)
+                    else:
+                        print(f"✅ XÁC NHẬN: File có chứa giọng hát!")
+                        print(f"   Confidence: {vocals_check['confidence']:.2%}")
+                    
+                    print("🔍 ===== KẾT THÚC KIỂM TRA GIỌNG HÁT =====\n")
+                except ImportError:
+                    logger.warning("⚠️ Vocals presence checker not available, skipping check")
+                    print("⚠️ Vocals presence checker not available, skipping check")
+                except Exception as e:
+                    logger.warning(f"⚠️ Vocals check failed: {e}, continuing anyway")
+                    print(f"⚠️ Vocals check failed: {e}, continuing anyway")
             
             # Convert to stereo WAV format
             converted_path = self.convert_to_stereo_and_wav(audio_path)
@@ -127,6 +161,28 @@ class RealAudioProcessor:
             print("🔄 Falling back to traditional method...")
             return self._separate_vocals_fallback(audio_path, output_path)
     
+    def _create_empty_vocals(self, audio_path: str, output_path: Union[str, None] = None) -> str:
+        """Create empty vocals file for instrumental tracks"""
+        try:
+            # Load original audio
+            audio, sr = librosa.load(audio_path, sr=44100)
+            
+            # Create silence with same duration
+            empty_audio = np.zeros_like(audio)
+            
+            if output_path is None:
+                output_path = os.path.join(self.output_dir, f"{os.path.basename(audio_path).split('.')[0]}_vocals_empty.wav")
+            
+            # Save empty vocals
+            sf.write(output_path, empty_audio.T, sr)
+            
+            logger.info(f"✅ Created empty vocals file for instrumental: {output_path}")
+            return output_path
+            
+        except Exception as e:
+            logger.error(f"❌ Error creating empty vocals: {e}")
+            raise
+    
     def _run_mdx_separation(self, audio_path: str, output_dir: str, model_name: str) -> Tuple[str, str]:
         """Run MDX separation using real AI models"""
         try:
@@ -162,11 +218,19 @@ class RealAudioProcessor:
             if self.device_base == "cuda":
                 device = torch.device("cuda:0")
                 processor_num = 0
-                provider = ["CUDAExecutionProvider"]
+                # Try CUDA provider, fallback to CPU if not available
+                available_providers = ort.get_available_providers()
+                if "CUDAExecutionProvider" in available_providers:
+                    provider = ["CUDAExecutionProvider"]
+                    print("🚀 Using CUDA GPU provider for Audio Separator")
+                else:
+                    provider = ["CPUExecutionProvider"]
+                    print("⚠️ CUDA provider not available, using CPU")
             else:
                 device = torch.device("cpu")
                 processor_num = -1
                 provider = ["CPUExecutionProvider"]
+                print("💻 Using CPU for Audio Separator")
             
             # Create model
             model = self.MDXModel(

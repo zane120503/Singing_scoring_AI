@@ -71,16 +71,66 @@ class OptimizedAudioProcessor:
                 output_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'Audio_separator_ui', 'clean_song_output')
             os.makedirs(output_dir, exist_ok=True)
             
-            # Bước 1: Voice Activity Detection (Correct)
-            logger.info("🔍 Bước 1: Phát hiện voice activity với Correct VAD...")
-            voice_segments = self.correct_vad.detect_voice_activity(karaoke_file)
+            # Bước 1: Voice Activity Detection với VocalsPresenceChecker
+            logger.info("\n" + "="*70)
+            logger.info("🔍 BƯỚC 1: PHÁT HIỆN VOCAL TRONG FILE KARAOKE")
+            logger.info("="*70)
             
-            if not voice_segments:
-                return {
-                    "success": False,
-                    "error": "Không phát hiện được giọng hát trong file karaoke",
-                    "step": "voice_detection"
-                }
+            # Sử dụng VocalsPresenceChecker để phát hiện vocal và log chi tiết
+            try:
+                sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
+                from vocals_presence_checker import VocalsPresenceChecker
+                vocals_checker = VocalsPresenceChecker()
+                vocals_result = vocals_checker.check_vocals_presence(karaoke_file)
+                
+                if not vocals_result.get('has_vocals'):
+                    logger.error("❌ Không phát hiện được giọng hát trong file karaoke")
+                    return {
+                        "success": False,
+                        "error": "Không phát hiện được giọng hát trong file karaoke",
+                        "step": "voice_detection"
+                    }
+                
+                # Lấy voice segments từ kết quả
+                voice_segments = vocals_result.get('voice_segments', [])
+                
+                if not voice_segments:
+                    logger.warning("⚠️ Phát hiện vocal nhưng không có voice segments, thử fallback VAD...")
+                    voice_segments = self.correct_vad.detect_voice_activity(karaoke_file)
+                
+                # Log thời gian vocal
+                if voice_segments:
+                    first_seg = voice_segments[0]
+                    last_seg = voice_segments[-1]
+                    logger.info(f"\n📊 THÔNG TIN VOCAL:")
+                    logger.info(f"   ⏰ VOCAL XUẤT HIỆN: {first_seg['start']:.2f}s ({int(first_seg['start']//60):02d}:{int(first_seg['start']%60):02d})")
+                    logger.info(f"   ⏰ VOCAL KẾT THÚC: {last_seg['end']:.2f}s ({int(last_seg['end']//60):02d}:{int(last_seg['end']%60):02d})")
+                    logger.info(f"   📏 Tổng thời gian vocal: {last_seg['end'] - first_seg['start']:.2f}s")
+                    logger.info(f"   📊 Số đoạn vocal: {len(voice_segments)}")
+                    logger.info("="*70 + "\n")
+                
+                if not voice_segments:
+                    return {
+                        "success": False,
+                        "error": "Không phát hiện được giọng hát trong file karaoke",
+                        "step": "voice_detection"
+                    }
+                
+            except Exception as e:
+                logger.warning(f"⚠️ VocalsPresenceChecker failed: {e}, using fallback VAD...")
+                voice_segments = self.correct_vad.detect_voice_activity(karaoke_file)
+                
+                if not voice_segments:
+                    return {
+                        "success": False,
+                        "error": "Không phát hiện được giọng hát trong file karaoke",
+                        "step": "voice_detection"
+                    }
+                
+                # Log với fallback
+                first_voice = voice_segments[0] if voice_segments else None
+                if first_voice:
+                    logger.info(f"🎯 Tìm thấy đoạn voice (fallback): {first_voice['start']:.2f}s - {first_voice['end']:.2f}s")
             
             # Tìm đoạn voice đầu tiên phù hợp
             first_voice = self._find_optimal_voice_segment(voice_segments)
@@ -90,34 +140,77 @@ class OptimizedAudioProcessor:
                     "error": "Không tìm thấy đoạn voice phù hợp",
                     "step": "voice_selection"
                 }
+
+            # Bước 2: Cắt file từ lúc vocal bắt đầu đến khi vocal kết thúc
+            logger.info("\n" + "="*70)
+            logger.info("✂️ BƯỚC 2: CẮT FILE KARAOKE THEO VỊ TRÍ VOCAL")
+            logger.info("="*70)
             
-            logger.info(f"🎯 Tìm thấy đoạn voice: {first_voice['start']:.2f}s - {first_voice['end']:.2f}s")
-
-            # Bước 2: Cắt 30s từ 15s đến 45s của file karaoke
-            logger.info("✂️ Bước 2: Cắt 30s (15s–45s) từ file karaoke...")
             import librosa, soundfile as sf
+            from smart_slicing_strategy import SmartSlicingStrategy
+            
             base_stem = os.path.splitext(os.path.basename(karaoke_file))[0]
-            start_t = 15.0
-            duration = 30.0
-            end_t = start_t + duration
-            audio, sr = librosa.load(karaoke_file, sr=None, mono=True)
-            start_sample = int(start_t * sr)
-            end_sample = int(end_t * sr)
-            if start_sample >= len(audio):
-                return {
-                    "success": False,
-                    "error": "Karaoke ngắn hơn 15s",
-                    "step": "audio_slicing"
-                }
-            slice_audio = audio[start_sample:min(end_sample, len(audio))]
-            sliced_path = os.path.join(output_dir, f"{base_stem}_slice_{int(start_t)}s_{int(end_t)}s.wav")
-            sf.write(sliced_path, slice_audio, sr)
+            
+            # Lấy thời gian vocal đầu tiên và cuối cùng
+            first_seg = voice_segments[0]
+            last_seg = voice_segments[-1]
+            
+            try:
+                # Cắt từ lúc vocal xuất hiện đến khi vocal kết thúc
+                slice_start = first_seg['start']
+                slice_end = last_seg['end']
+                
+                logger.info(f"📌 Cắt file karaoke:")
+                logger.info(f"   Từ: {slice_start:.2f}s ({int(slice_start//60):02d}:{int(slice_start%60):02d})")
+                logger.info(f"   Đến: {slice_end:.2f}s ({int(slice_end//60):02d}:{int(slice_end%60):02d})")
+                logger.info(f"   Thời lượng: {slice_end - slice_start:.2f}s")
+                
+                # Load và cắt audio
+                audio, sr = librosa.load(karaoke_file, sr=None, mono=True)
+                start_sample = int(slice_start * sr)
+                end_sample = int(slice_end * sr)
+                end_sample = min(end_sample, len(audio))  # Đảm bảo không vượt quá
+                
+                if start_sample >= len(audio):
+                    return {
+                        "success": False,
+                        "error": f"Karaoke ngắn hơn {slice_start:.2f}s",
+                        "step": "audio_slicing"
+                    }
+                
+                slice_audio = audio[start_sample:end_sample]
+                sliced_path = os.path.join(output_dir, f"{base_stem}_slice_{int(slice_start)}s_{int(slice_end)}s.wav")
+                sf.write(sliced_path, slice_audio, sr)
+                
+                logger.info(f"✅ Đã cắt file thành công!")
+                logger.info(f"   📁 File output: {sliced_path}")
+                logger.info("="*70 + "\n")
+                
+            except Exception as e:
+                logger.error(f"❌ Lỗi cắt file: {e}")
+                # Fallback: thử smart slicing
+                try:
+                    logger.warning("⚠️ Thử smart slicing strategy...")
+                    slicer = SmartSlicingStrategy()
+                    slice_result = slicer.slice_with_voice_guidance(karaoke_file, voice_segments, 
+                                                                     os.path.join(output_dir, f"{base_stem}_smart_slice.wav"))
+                    sliced_path = slice_result['output_path']
+                    slice_start = slice_result['start']
+                    slice_end = slice_result['end']
+                    logger.info(f"✅ Smart slice created: {slice_start:.2f}s - {slice_end:.2f}s")
+                except Exception as e2:
+                    logger.error(f"❌ Smart slicing cũng thất bại: {e2}")
+                    return {
+                        "success": False,
+                        "error": f"Failed to slice audio: {str(e)}",
+                        "step": "audio_slicing"
+                    }
 
-            # Bước 3: Cắt beat từ 15s đến 45s (cùng khoảng với karaoke) để đảm bảo key chính xác
-            logger.info("✂️ Bước 3: Cắt beat từ 15s–45s (cùng khoảng với karaoke)...")
+            # Bước 3: Cắt beat (cùng khoảng với karaoke) để đảm bảo key chính xác
+            logger.info(f"✂️ Bước 3: Cắt beat cùng khoảng ({slice_start:.1f}s–{slice_end:.1f}s)...")
             beat_audio, beat_sr = librosa.load(beat_file, sr=None, mono=True)
-            beat_start_t = start_t  # Cùng thời điểm với karaoke (15s)
-            beat_end_t = end_t      # Cùng thời điểm với karaoke (45s)
+            beat_start_t = slice_start  # Cùng thời điểm với karaoke slice
+            beat_end_t = slice_end       # Cùng thời điểm với karaoke slice
             beat_start_sample = int(beat_start_t * beat_sr)
             beat_end_sample = int(beat_end_t * beat_sr)
             if beat_start_sample >= len(beat_audio):

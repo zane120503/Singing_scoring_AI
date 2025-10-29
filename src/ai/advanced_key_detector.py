@@ -85,16 +85,138 @@ class AdvancedKeyDetector:
     def _check_docker_essentia(self):
         """Check if Docker Essentia is available"""
         try:
-            # Test Docker Essentia
-            result = subprocess.run("docker run --rm essentia-karaoke python3 -c \"import essentia.standard as es; print('OK')\"", 
-                                  shell=True, capture_output=True, text=True)
+            logger.info("🔍 Kiểm tra Docker...")
+            
+            # Bước 1: Kiểm tra Docker có chạy không
+            docker_check = subprocess.run("docker --version", shell=True, capture_output=True, text=True, timeout=5)
+            if docker_check.returncode != 0:
+                logger.warning("⚠️ Docker không được cài đặt hoặc không trong PATH")
+                logger.warning(f"   Error: {docker_check.stderr}")
+                return
+            
+            logger.info(f"✅ Docker version: {docker_check.stdout.strip()}")
+            
+            # Bước 2: Kiểm tra WSL trước (vì Docker trên Windows thường dùng WSL)
+            logger.info("   🔄 Kiểm tra WSL (Windows Subsystem for Linux)...")
+            try:
+                wsl_check = subprocess.run("wsl --list --verbose", shell=True, capture_output=True, text=True, timeout=3)
+                if wsl_check.returncode != 0:
+                    logger.warning("⚠️ WSL không phản hồi hoặc chưa được cài đặt")
+                    logger.warning("   💡 Nếu Docker Desktop báo lỗi 'WSL is unresponsive':")
+                    logger.warning("      1. Đóng Docker Desktop hoàn toàn")
+                    logger.warning("      2. Mở PowerShell (Run as Administrator)")
+                    logger.warning("      3. Chạy lệnh: wsl --shutdown")
+                    logger.warning("      4. Khởi động lại Docker Desktop")
+                    logger.warning("      5. Nếu vẫn lỗi, thử restart máy tính")
+                else:
+                    logger.info("   ✅ WSL đang hoạt động")
+                    if wsl_check.stdout:
+                        logger.debug(f"   WSL distributions: {wsl_check.stdout.strip()}")
+            except subprocess.TimeoutExpired:
+                logger.warning("⚠️ WSL không phản hồi (timeout)")
+                logger.warning("   💡 WSL có thể bị treo. Hãy:")
+                logger.warning("      1. Mở PowerShell (Run as Administrator)")
+                logger.warning("      2. Chạy: wsl --shutdown")
+                logger.warning("      3. Khởi động lại Docker Desktop")
+            except Exception as e:
+                logger.debug(f"   WSL check skipped: {e}")
+            
+            # Bước 3: Kiểm tra Docker daemon có chạy không (giảm timeout)
+            logger.info("   🔄 Kiểm tra Docker daemon (có thể mất vài giây)...")
+            try:
+                docker_ps = subprocess.run("docker ps", shell=True, capture_output=True, text=True, timeout=3)
+                if docker_ps.returncode != 0:
+                    logger.warning("⚠️ Docker daemon không chạy hoặc không thể kết nối")
+                    if docker_ps.stderr:
+                        error_msg = docker_ps.stderr.strip()
+                        if "500 Internal Server Error" in error_msg or "WSL" in error_msg.upper():
+                            logger.warning("   💡 Vấn đề với Docker Desktop hoặc WSL")
+                            logger.warning("   💡 Giải pháp:")
+                            logger.warning("      1. Đóng Docker Desktop hoàn toàn (Quit từ system tray)")
+                            logger.warning("      2. Mở PowerShell (Run as Administrator)")
+                            logger.warning("      3. Chạy: wsl --shutdown")
+                            logger.warning("      4. Khởi động lại Docker Desktop")
+                            logger.warning("      5. Đợi Docker Desktop khởi động hoàn toàn")
+                            logger.warning("      6. Chạy lại chương trình")
+                            logger.warning("   📖 Chi tiết: https://docs.microsoft.com/en-us/windows/wsl/")
+                        else:
+                            logger.warning(f"   Error: {error_msg}")
+                    return
+            except subprocess.TimeoutExpired:
+                logger.warning("⚠️ Docker daemon không phản hồi (timeout sau 3 giây)")
+                logger.warning("   💡 Docker Desktop có thể đang gặp vấn đề với WSL")
+                logger.warning("   💡 Nếu Docker Desktop hiển thị 'WSL is unresponsive':")
+                logger.warning("      1. Đóng Docker Desktop (Quit)")
+                logger.warning("      2. Mở PowerShell (Admin): wsl --shutdown")
+                logger.warning("      3. Khởi động lại Docker Desktop")
+                logger.info("   ℹ️  Hệ thống sẽ tiếp tục hoạt động bình thường nhưng không có Docker Essentia AI")
+                return
+            
+            logger.info("✅ Docker daemon đang chạy")
+            
+            # Bước 4: Kiểm tra container essentia-karaoke có tồn tại không
+            try:
+                container_check = subprocess.run("docker ps -a --filter name=essentia-karaoke --format \"{{.Names}}\"", 
+                                                shell=True, capture_output=True, text=True, timeout=3)
+            except subprocess.TimeoutExpired:
+                logger.warning("⚠️ Lệnh kiểm tra container timeout")
+                return
+            
+            container_name = container_check.stdout.strip()
+            
+            if not container_name:
+                logger.warning("⚠️ Container 'essentia-karaoke' chưa được tạo")
+                logger.info("   💡 Để tạo container, chạy lệnh:")
+                logger.info("      docker run -d --name essentia-karaoke mtgupf/essentia:latest")
+                return
+            
+            logger.info(f"✅ Tìm thấy container: {container_name}")
+            
+            # Bước 5: Kiểm tra container có đang chạy không
+            try:
+                container_status = subprocess.run("docker ps --filter name=essentia-karaoke --format \"{{.Status}}\"", 
+                                                 shell=True, capture_output=True, text=True, timeout=3)
+            except subprocess.TimeoutExpired:
+                logger.warning("⚠️ Lệnh kiểm tra container status timeout")
+                return
+            
+            if not container_status.stdout.strip():
+                logger.warning("⚠️ Container 'essentia-karaoke' không đang chạy")
+                logger.info("   💡 Khởi động container bằng lệnh:")
+                logger.info("      docker start essentia-karaoke")
+                return
+            
+            logger.info(f"✅ Container đang chạy: {container_status.stdout.strip()}")
+            
+            # Bước 6: Test Essentia trong container
+            logger.info("🧪 Kiểm tra Essentia trong container...")
+            test_cmd = 'docker exec essentia-karaoke python3 -c "import essentia.standard as es; print(\'OK\')"'
+            try:
+                result = subprocess.run(test_cmd, shell=True, capture_output=True, text=True, timeout=5)
+            except subprocess.TimeoutExpired:
+                logger.warning("⚠️ Lệnh test Essentia timeout")
+                return
+            
             if result.returncode == 0 and "OK" in result.stdout:
                 self.docker_available = True
                 logger.info("✅ Docker Essentia AI sẵn sàng!")
             else:
-                logger.warning("⚠️ Docker Essentia không khả dụng")
+                logger.warning("⚠️ Essentia không khả dụng trong container")
+                logger.warning(f"   Return code: {result.returncode}")
+                logger.warning(f"   stdout: {result.stdout}")
+                logger.warning(f"   stderr: {result.stderr}")
+                logger.info("   💡 Thử cài lại container:")
+                logger.info("      docker rm -f essentia-karaoke")
+                logger.info("      docker run -d --name essentia-karaoke mtgupf/essentia:latest")
+                
+        except subprocess.TimeoutExpired:
+            logger.warning("⚠️ Docker command timeout - Docker có thể không phản hồi")
+        except FileNotFoundError:
+            logger.warning("⚠️ Docker command không tìm thấy - Docker chưa được cài đặt")
         except Exception as e:
             logger.warning(f"⚠️ Docker Essentia check failed: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
     
     def detect_key(self, audio_path: str, audio_type: str = "general") -> Dict:
         """Detect key of audio file with audio type optimization and GPU acceleration"""
@@ -121,8 +243,16 @@ class AdvancedKeyDetector:
                 logger.info("🔧 Applied vocals-specific preprocessing")
             
             # Use hybrid detector for better accuracy
+            # Store original audio for vocals-specific methods (preprocessing can affect key)
+            original_audio = None
+            if audio_type == "vocals":
+                if self.use_gpu:
+                    original_audio, _ = self._load_audio_gpu(audio_path)
+                else:
+                    original_audio, _ = librosa.load(audio_path, sr=22050)
+            
             logger.info("🔬 Sử dụng Hybrid Key Detector...")
-            key_info = self._detect_with_hybrid(audio_path, audio, sr, audio_type)
+            key_info = self._detect_with_hybrid(audio_path, audio, sr, audio_type, original_audio=original_audio)
             logger.info("✅ Hybrid key detection hoàn thành!")
             
             logger.info(f"🎵 Kết quả: {key_info['key']} {key_info['scale']} (confidence: {key_info['confidence']:.3f})")
@@ -268,27 +398,35 @@ class AdvancedKeyDetector:
             logger.warning(f"Light spectral gating failed: {e}")
             return audio
     
-    def _detect_with_hybrid(self, audio_path: str, audio: np.ndarray, sr: int, audio_type: str = "unknown") -> Dict:
+    def _detect_with_hybrid(self, audio_path: str, audio: np.ndarray, sr: int, audio_type: str = "unknown", original_audio: np.ndarray = None) -> Dict:
         """Hybrid key detection combining multiple methods"""
         try:
             results = []
             
             # Adjust weights based on audio type
             if audio_type == "vocals":
-                # For vocals, prioritize traditional methods that work better
-                essentia_weight = 0.1  # Very low weight for AI (it's often wrong for vocals)
-                traditional_weight = 0.7  # Highest weight for traditional
-                vocals_weight = 0.5  # Medium weight for vocals-specific
-                chroma_weight = 0.6  # High weight for chroma
+                # For vocals, prioritize Essentia AI (nhất là khi confidence cao > 0.7)
+                essentia_weight = 2.5  # Rất cao weight cho Essentia (phương pháp AI tốt nhất)
+                traditional_weight = 0.2  # Giảm weight xuống thấp
+                vocals_weight = 0.8  # Giảm weight của vocals-specific (có thể sai)
+                chroma_weight = 0.2  # Reduced weight for GPU chroma to increase accuracy
+            elif audio_type == "beat":
+                # For beat, prioritize consensus (nhiều methods đồng ý đáng tin hơn Essentia đơn lẻ)
+                essentia_weight = 0.3  # Giảm weight cho Essentia (có thể sai với beat)
+                traditional_weight = 0.6  # Tăng weight cho traditional
+                vocals_weight = 0.5  # Vocals-specific có thể dùng cho beat
+                chroma_weight = 0.3
+                beat_weight = 0.8  # Beat-specific method có weight cao nhất
             else:
                 # For other types, use balanced weights
                 essentia_weight = 0.3
                 traditional_weight = 0.3
                 vocals_weight = 0.3
                 chroma_weight = 0.3
+                beat_weight = 0.5  # Default beat weight for non-beat types
             
-            # Method 1: Docker Essentia AI (if available) - Skip for vocals
-            if self.docker_available and audio_type != "vocals":
+            # Method 1: Docker Essentia AI (if available) - Enable for vocals too
+            if self.docker_available:
                 try:
                     essentia_result = self._detect_with_docker_essentia(audio_path)
                     if essentia_result:
@@ -317,8 +455,10 @@ class AdvancedKeyDetector:
                 logger.warning(f"Traditional method failed: {e}")
             
             # Method 3: Vocals-specific key detection
+            # Use original audio (not preprocessed) for better accuracy
             try:
-                vocals_result = self._detect_with_vocals_specific(audio, sr)
+                vocals_audio = original_audio if (audio_type == "vocals" and original_audio is not None) else audio
+                vocals_result = self._detect_with_vocals_specific(vocals_audio, sr)
                 if vocals_result:
                     results.append({
                         'key': vocals_result['key'],
@@ -335,7 +475,7 @@ class AdvancedKeyDetector:
                 if self.use_gpu:
                     chroma_result = self._detect_with_gpu_chroma(audio, sr)
                     method_name = 'GPU Chroma Analysis'
-                    weight = 0.5  # Higher weight for GPU method
+                    weight = chroma_weight  # Use assigned weight from audio_type
                 else:
                     chroma_result = self._detect_with_enhanced_chroma(audio, sr)
                     method_name = 'Enhanced Chroma'
@@ -362,7 +502,7 @@ class AdvancedKeyDetector:
                             'scale': beat_result['scale'],
                             'confidence': beat_result['confidence'],
                             'method': 'Beat Harmonic Analysis',
-                            'weight': 0.5  # High weight for beat-specific method
+                            'weight': beat_weight  # Use beat_weight from audio_type settings
                         })
                 except Exception as e:
                     logger.warning(f"Beat harmonic analysis failed: {e}")
@@ -374,7 +514,7 @@ class AdvancedKeyDetector:
                     logger.info(f"   {result['method']}: {result['key']} {result['scale']} (conf: {result['confidence']:.3f})")
                 
                 # Weighted voting
-                best_result = self._weighted_voting(results)
+                best_result = self._weighted_voting(results, audio_type)
                 logger.info(f"🏆 Best result: {best_result['method']} - {best_result['key']} {best_result['scale']}")
                 
                 return {
@@ -661,7 +801,7 @@ class AdvancedKeyDetector:
             logger.warning(f"Music21 detection failed: {e}")
             return None
     
-    def _weighted_voting(self, results: List[Dict]) -> Dict:
+    def _weighted_voting(self, results: List[Dict], audio_type: str = "unknown") -> Dict:
         """Weighted voting mechanism with consensus priority"""
         try:
             # Group results by key+scale
@@ -671,6 +811,14 @@ class AdvancedKeyDetector:
                 if key_scale not in key_groups:
                     key_groups[key_scale] = []
                 key_groups[key_scale].append(result)
+            
+            # Check if there's Essentia with high confidence anywhere (global check)
+            has_global_essentia_high_conf = False
+            for result in results:
+                if ('Docker Essentia' in result.get('method', '') or 'Essentia' in result.get('method', '')):
+                    if result['confidence'] > 0.7:
+                        has_global_essentia_high_conf = True
+                        break
             
             # Calculate weighted scores with consensus bonus
             weighted_scores = {}
@@ -684,18 +832,92 @@ class AdvancedKeyDetector:
                     weighted_confidence += result['confidence'] * weight
                 
                 if total_weight > 0:
-                    # Add consensus bonus: more methods agreeing = higher score
-                    consensus_bonus = len(group) * 0.5  # Increased to 0.5 per agreeing method
+                    # Check if this group has Essentia with high confidence
+                    has_group_essentia_high_conf = False
+                    for result in group:
+                        if 'Docker Essentia' in result.get('method', '') or 'Essentia' in result.get('method', ''):
+                            if result['confidence'] > 0.7:
+                                has_group_essentia_high_conf = True
+                                break
                     
-                    # Special bonus for beat-specific methods
+                    # Add consensus bonus: more methods agreeing = higher score
+                    # For vocals: prioritize Essentia. For beat: prioritize consensus
+                    if audio_type == "vocals":
+                        # For vocals, reduce consensus bonus if there's high-confidence Essentia
+                        if has_global_essentia_high_conf:
+                            if has_group_essentia_high_conf:
+                                consensus_bonus = len(group) * 0.1
+                            else:
+                                consensus_bonus = len(group) * 0.2
+                        else:
+                            consensus_bonus = len(group) * 0.8
+                    elif audio_type == "beat":
+                        # For beat, prioritize consensus especially when many methods agree
+                        if len(group) >= 3:
+                            # 3+ methods đồng ý: consensus bonus rất cao (đáng tin)
+                            consensus_bonus = len(group) * 1.5
+                        elif len(group) == 2:
+                            # 2 methods đồng ý: consensus bonus cao
+                            consensus_bonus = len(group) * 1.0
+                        else:
+                            # 1 method: consensus bonus thấp
+                            consensus_bonus = len(group) * 0.5
+                    else:
+                        # For other types, use balanced consensus bonus
+                        consensus_bonus = len(group) * 0.8
+                    
+                    # Special bonus for Essentia AI (very reliable, especially for vocals)
+                    essentia_bonus = 0
+                    vocal_bonus = 0
+                    traditional_bonus = 0
+                    for result in group:
+                        if 'Docker Essentia' in result.get('method', '') or 'Essentia' in result.get('method', ''):
+                            # Essentia bonus phụ thuộc vào audio_type
+                            if audio_type == "vocals":
+                                # For vocals: Essentia rất đáng tin
+                                if result['confidence'] > 0.75:
+                                    essentia_bonus = 4.0
+                                elif result['confidence'] > 0.7:
+                                    essentia_bonus = 3.0
+                                else:
+                                    essentia_bonus = 1.5
+                            elif audio_type == "beat":
+                                # For beat: Essentia có thể sai, chỉ bonus khi confidence rất cao
+                                if result['confidence'] > 0.8:
+                                    essentia_bonus = 1.0  # Nhỏ hơn nhiều so với vocals
+                                elif result['confidence'] > 0.75:
+                                    essentia_bonus = 0.5
+                                else:
+                                    essentia_bonus = 0.1  # Rất nhỏ
+                            else:
+                                # Other types: balanced
+                                if result['confidence'] > 0.75:
+                                    essentia_bonus = 1.0
+                                elif result['confidence'] > 0.7:
+                                    essentia_bonus = 0.5
+                                else:
+                                    essentia_bonus = 0.2
+                        elif 'Traditional Librosa' in result.get('method', ''):
+                            # Giảm bonus cho traditional khi phát hiện vocals (có thể sai)
+                            traditional_bonus = 0.02  # Rất rất thấp
+                        elif 'Vocals-Specific' in result.get('method', ''):
+                            # Giảm bonus cho vocals-specific nếu Essentia có confidence cao
+                            if has_global_essentia_high_conf:
+                                vocal_bonus = 0.05  # Rất rất thấp khi Essentia đáng tin
+                            else:
+                                vocal_bonus = 0.4
+                    
+                    # Beat-specific bonus for instrumental tracks
                     beat_bonus = 0
                     for result in group:
                         if 'Beat Harmonic Analysis' in result.get('method', ''):
-                            beat_bonus += 0.3
-                        elif 'Docker Essentia' in result.get('method', ''):
-                            beat_bonus += 0.1  # Reduced Docker Essentia bonus
+                            # Beat Harmonic Analysis rất đáng tin cho beat
+                            if audio_type == "beat":
+                                beat_bonus += 0.8  # Tăng bonus cho beat-specific method
+                            else:
+                                beat_bonus += 0.3
                     
-                    weighted_scores[key_scale] = (weighted_confidence / total_weight) + consensus_bonus + beat_bonus
+                    weighted_scores[key_scale] = (weighted_confidence / total_weight) + consensus_bonus + traditional_bonus + vocal_bonus + essentia_bonus + beat_bonus
             
             # Find best key
             if weighted_scores:
@@ -977,21 +1199,45 @@ class AdvancedKeyDetector:
             if chroma_result:
                 results.append(chroma_result)
             
-            # Voting among vocals-specific methods
+            # Method 4: Tonal Centroid (Tonnetz) analysis - better for key detection
+            tonnetz_result = self._analyze_vocals_tonnetz(audio, sr)
+            if tonnetz_result:
+                results.append(tonnetz_result)
+            
+            # Voting among vocals-specific methods - weighted by method reliability
             if results:
-                # Simple voting - most common result wins
+                # Weight different methods by their reliability
+                method_weights = {
+                    'Vocals Tonnetz Analysis': 1.5,  # Most reliable for key detection
+                    'Vocals Chroma Analysis': 1.2,   # Reliable correlation-based method
+                    'Vocals Harmonic Analysis': 0.8,
+                    'Vocals Fundamental Analysis': 0.7
+                }
+                
                 key_votes = {}
                 for result in results:
                     key_name = f"{result['key']} {result['scale']}"
+                    method = result.get('method', '')
+                    weight = method_weights.get(method, 1.0)
+                    weighted_conf = result['confidence'] * weight
+                    
                     if key_name not in key_votes:
-                        key_votes[key_name] = {'count': 0, 'confidence': 0, 'result': result}
+                        key_votes[key_name] = {'count': 0, 'weighted_confidence': 0, 'total_weight': 0, 'result': result}
+                    
                     key_votes[key_name]['count'] += 1
-                    key_votes[key_name]['confidence'] += result['confidence']
+                    key_votes[key_name]['weighted_confidence'] += weighted_conf
+                    key_votes[key_name]['total_weight'] += weight
                 
-                # Find most voted key
-                best_key = max(key_votes.items(), key=lambda x: x[1]['count'])
+                # Find best key based on weighted confidence
+                # Prefer keys with more methods agreeing AND higher weighted confidence
+                for key_name, vote_data in key_votes.items():
+                    # Boost for consensus (multiple methods agreeing)
+                    consensus_boost = vote_data['count'] * 0.2
+                    vote_data['final_score'] = (vote_data['weighted_confidence'] / max(vote_data['total_weight'], 0.1)) + consensus_boost
+                
+                best_key = max(key_votes.items(), key=lambda x: x[1]['final_score'])
                 best_result = best_key[1]['result']
-                best_result['confidence'] = best_key[1]['confidence'] / best_key[1]['count']
+                best_result['confidence'] = best_key[1]['weighted_confidence'] / max(best_key[1]['total_weight'], 0.1)
                 
                 return best_result
             
@@ -1090,38 +1336,156 @@ class AdvancedKeyDetector:
             return None
     
     def _analyze_vocals_chroma(self, audio: np.ndarray, sr: int) -> Dict:
-        """Analyze vocals using chroma with vocals-specific parameters"""
+        """Analyze vocals using chroma with vocals-specific parameters - improved with direct correlation"""
         try:
-            # Use smaller hop length for better time resolution
-            chroma = librosa.feature.chroma_stft(y=audio, sr=sr, hop_length=256, n_fft=1024)
+            # Use multiple chroma extraction methods for better accuracy
+            chroma1 = librosa.feature.chroma_stft(y=audio, sr=sr, hop_length=256, n_fft=1024)
+            chroma2 = librosa.feature.chroma_cqt(y=audio, sr=sr, hop_length=256)
+            chroma3 = librosa.feature.chroma_cens(y=audio, sr=sr, hop_length=256)
             
-            # Focus on stronger chroma values
-            chroma_mean = np.mean(chroma, axis=1)
-            chroma_strong = chroma_mean > np.max(chroma_mean) * 0.3  # Only strong chroma values
+            # Combine chroma features (weighted average)
+            chroma_combined = (chroma1 * 0.5 + chroma2 * 0.3 + chroma3 * 0.2)
+            chroma_mean = np.mean(chroma_combined, axis=1)
             
-            if not np.any(chroma_strong):
-                return None
+            # Normalize chroma
+            chroma_normalized = chroma_mean / (np.sum(chroma_mean) + 1e-10)
             
-            # Get strong chroma indices
-            strong_indices = np.where(chroma_strong)[0]
-            chroma_notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
-            strong_notes = [chroma_notes[i] for i in strong_indices]
+            # Calculate correlations with key profiles directly (more accurate than note analysis)
+            major_correlations = []
+            minor_correlations = []
             
-            # Analyze key
-            key_result = self._analyze_key_from_notes(strong_notes)
+            for i in range(12):
+                major_rotated = np.roll(self.major_profile, i)
+                minor_rotated = np.roll(self.minor_profile, i)
+                
+                # Normalize profiles
+                major_rotated = major_rotated / (np.sum(major_rotated) + 1e-10)
+                minor_rotated = minor_rotated / (np.sum(minor_rotated) + 1e-10)
+                
+                # Compute correlation
+                major_corr = np.corrcoef(chroma_normalized, major_rotated)[0, 1]
+                minor_corr = np.corrcoef(chroma_normalized, minor_rotated)[0, 1]
+                
+                # Handle NaN values
+                if np.isnan(major_corr):
+                    major_corr = 0.0
+                if np.isnan(minor_corr):
+                    minor_corr = 0.0
+                
+                major_correlations.append(major_corr)
+                minor_correlations.append(minor_corr)
             
-            if key_result:
-                return {
-                    'key': key_result['key'],
-                    'scale': key_result['scale'],
-                    'confidence': key_result['confidence'] * 0.6,
-                    'method': 'Vocals Chroma Analysis'
-                }
+            # Find best matches
+            major_max_idx = np.argmax(major_correlations)
+            minor_max_idx = np.argmax(minor_correlations)
             
-            return None
+            major_max_corr = major_correlations[major_max_idx]
+            minor_max_corr = minor_correlations[minor_max_idx]
+            
+            # Choose between major and minor with improved confidence
+            if major_max_corr > minor_max_corr:
+                key_name = self.key_names[major_max_idx]
+                scale = 'major'
+                confidence = max(0.0, min(1.0, major_max_corr * 1.2))  # Boost confidence slightly
+            else:
+                key_name = self.key_names[minor_max_idx]
+                scale = 'minor'
+                confidence = max(0.0, min(1.0, minor_max_corr * 1.2))  # Boost confidence slightly
+            
+            return {
+                'key': key_name,
+                'scale': scale,
+                'confidence': confidence,  # Increased from 0.6 multiplier
+                'method': 'Vocals Chroma Analysis'
+            }
             
         except Exception as e:
             logger.warning(f"Vocals chroma analysis failed: {e}")
+            return None
+    
+    def _analyze_vocals_tonnetz(self, audio: np.ndarray, sr: int) -> Dict:
+        """Analyze vocals using Tonal Centroid (Tonnetz) - more accurate for key detection"""
+        try:
+            # Extract Tonnetz features (6-dimensional representation of tonal space)
+            chroma = librosa.feature.chroma_stft(y=audio, sr=sr, hop_length=512)
+            tonnetz = librosa.feature.tonnetz(y=audio, sr=sr, chroma=chroma)
+            
+            # Average over time
+            tonnetz_mean = np.mean(tonnetz, axis=1)
+            
+            # Tonnetz dimensions represent:
+            # dim 0: minor third (C-Eb)
+            # dim 1: major third (C-E)
+            # dim 2: perfect fifth (C-G)
+            # dim 3: minor sixth (C-Ab)
+            # dim 4: major sixth (C-A)
+            # dim 5: minor seventh (C-Bb)
+            
+            # Convert Tonnetz to chroma-like representation for key profile matching
+            # Use chroma extracted from audio for correlation with key profiles
+            chroma_mean = np.mean(chroma, axis=1)
+            chroma_normalized = chroma_mean / (np.sum(chroma_mean) + 1e-10)
+            
+            # Calculate correlations with key profiles
+            major_correlations = []
+            minor_correlations = []
+            
+            for i in range(12):
+                major_rotated = np.roll(self.major_profile, i)
+                minor_rotated = np.roll(self.minor_profile, i)
+                
+                # Normalize profiles
+                major_rotated = major_rotated / (np.sum(major_rotated) + 1e-10)
+                minor_rotated = minor_rotated / (np.sum(minor_rotated) + 1e-10)
+                
+                # Compute correlation
+                major_corr = np.corrcoef(chroma_normalized, major_rotated)[0, 1]
+                minor_corr = np.corrcoef(chroma_normalized, minor_rotated)[0, 1]
+                
+                # Handle NaN values
+                if np.isnan(major_corr):
+                    major_corr = 0.0
+                if np.isnan(minor_corr):
+                    minor_corr = 0.0
+                
+                # Boost correlation based on Tonnetz characteristics
+                # Major keys have strong perfect fifths and major thirds
+                # Minor keys have strong perfect fifths and minor thirds
+                fifth_strength = np.abs(tonnetz_mean[2])  # Perfect fifth dimension
+                
+                # Apply Tonnetz-based boost (perfect fifths are important for key detection)
+                major_corr *= (1.0 + fifth_strength * 0.3)
+                minor_corr *= (1.0 + fifth_strength * 0.3)
+                
+                major_correlations.append(major_corr)
+                minor_correlations.append(minor_corr)
+            
+            # Find best matches
+            major_max_idx = np.argmax(major_correlations)
+            minor_max_idx = np.argmax(minor_correlations)
+            
+            major_max_corr = major_correlations[major_max_idx]
+            minor_max_corr = minor_correlations[minor_max_idx]
+            
+            # Choose between major and minor
+            if major_max_corr > minor_max_corr:
+                key_name = self.key_names[major_max_idx]
+                scale = 'major'
+                confidence = max(0.0, min(1.0, major_max_corr))
+            else:
+                key_name = self.key_names[minor_max_idx]
+                scale = 'minor'
+                confidence = max(0.0, min(1.0, minor_max_corr))
+            
+            return {
+                'key': key_name,
+                'scale': scale,
+                'confidence': confidence,
+                'method': 'Vocals Tonnetz Analysis'
+            }
+            
+        except Exception as e:
+            logger.warning(f"Vocals Tonnetz analysis failed: {e}")
             return None
     
     def _analyze_key_from_notes(self, note_names: list) -> Dict:
